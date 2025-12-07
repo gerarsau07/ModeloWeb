@@ -1,24 +1,25 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+# Archivo: C:\modeloWeb\bk\train.py
 import torch
 import torch.nn as nn
-from torchvision import transforms
-from PIL import Image
-import io
+import torch.optim as optim
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+import os
 
-app = FastAPI()
+# Configuración
+BATCH_SIZE = 64
+EPOCHS = 1  # 1 época es suficiente para probar rápido
+MODEL_PATH = "mi_modelo_mnist.pth"
 
-# 1. CONFIGURACIÓN CORS (Vital para que Vite pueda hablar con Python)
-# Permitimos que tu frontend en localhost:5173 envíe peticiones
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"], # El puerto por defecto de Vite
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Transformación
+transform = transforms.Compose([transforms.ToTensor()])
 
-# 2. DEFINIR EL MODELO (Debe ser idéntico al del entrenamiento)
+# Datos (Se descargarán en bk/data)
+print("📂 Descargando datos...")
+train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+train_loader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+# Modelo
 model = nn.Sequential(
     nn.Flatten(),
     nn.Linear(28*28, 128),
@@ -26,31 +27,19 @@ model = nn.Sequential(
     nn.Linear(128, 10)
 )
 
-# 3. CARGAR LOS PESOS
-# map_location='cpu' evita errores si tu servidor no tiene GPU dedicada
-model.load_state_dict(torch.load("mi_modelo_mnist.pth", map_location=torch.device('cpu')))
-model.eval()
+# Entrenamiento
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# Definir la transformación (igual que en entrenamiento)
-transform = transforms.Compose([
-    transforms.Resize((28, 28)),
-    transforms.ToTensor()
-])
+print("🚀 Entrenando...")
+for epoch in range(EPOCHS):
+    for images, labels in train_loader:
+        optimizer.zero_grad()
+        output = model(images)
+        loss = criterion(output, labels)
+        loss.backward()
+        optimizer.step()
 
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    # Leer la imagen subida
-    image_data = await file.read()
-    image = Image.open(io.BytesIO(image_data)).convert('L') # Convertir a escala de grises
-    
-    # Preprocesar
-    img_tensor = transform(image).unsqueeze(0) # Añadir dimensión de batch
-    
-    # Predecir
-    with torch.no_grad():
-        output = model(img_tensor)
-        prediction = torch.argmax(output, dim=1).item()
-        
-    return {"numero": prediction}
-
-# Para correrlo usa: uvicorn main:app --reload
+# Guardar
+torch.save(model.state_dict(), MODEL_PATH)
+print(f"✅ Modelo guardado en: {os.path.abspath(MODEL_PATH)}")
